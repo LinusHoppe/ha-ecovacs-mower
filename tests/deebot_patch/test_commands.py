@@ -1076,3 +1076,24 @@ async def test_the_v2_delegate_still_sends_no_type_on_resume() -> None:
         await CleanMower(CleanAction.RESUME)._execute(AsyncMock(), _DEVICE_INFO, bus)
 
     assert sent == [{"act": "resume", "content": {}}]
+
+
+async def test_start_becomes_resume_when_docked_with_a_recorded_job_type() -> None:
+    # Issue #104. The mower docked via the `dock` command from HA: record.docked
+    # is True and record.job_type is set from the previous onCleanInfo push, but
+    # record.suppressed is None because the pause push arrived before docking
+    # and move() cleared suppressed on the way in. Without this check,
+    # _effective_action fell through to the last StateEvent (DOCKED) and
+    # returned START; the firmware silently ignores a start while docked with a
+    # paused job, so the mower did nothing.
+    bus = _bus()
+    record = register(bus)
+    record.dock()
+    record.note_job({"type": "auto"})
+
+    fake, _ = _transport(_OK)
+    with patch.object(Command, "_execute", fake):
+        command = CleanMower(CleanAction.START)
+        await command._execute(AsyncMock(), _DEVICE_INFO, bus)
+
+    assert command._delegate(Family.NON_V2)._args["act"] == "resume"
