@@ -439,6 +439,12 @@ class CleanMower(_AdaptiveFamily, Clean):
         A pause the gate suppressed still has to reach this decision: the
         entity reads docked, but the plan is paused and the mower wants
         ``resume``. Nothing else reads ``record.suppressed``.
+
+        If the mower is docked with a resumable job (job_type set, no
+        explicit end_job) but never produced a suppressed PAUSED push —
+        because the pause push arrived before docking, and move() cleared
+        suppressed on the way in — use the job_type as evidence that a
+        resumable job exists (issue #104).
         """
         if self._action not in (CleanAction.START, CleanAction.RESUME):
             return self._action
@@ -446,6 +452,8 @@ class CleanMower(_AdaptiveFamily, Clean):
         state = None
         if (record := record_for(event_bus)) is not None:
             state = record.suppressed
+            if state is None and record.docked and record.job_type is not None:
+                return CleanAction.RESUME
         if state is None and (last := event_bus.get_last_event(StateEvent)):
             state = last.state
 
