@@ -1079,13 +1079,18 @@ async def test_the_v2_delegate_still_sends_no_type_on_resume() -> None:
 
 
 async def test_start_becomes_resume_when_docked_with_a_recorded_job_type() -> None:
-    # Issue #104. The mower docked via the `dock` command from HA: record.docked
-    # is True and record.job_type is set from the previous onCleanInfo push, but
-    # record.suppressed is None because the pause push arrived before docking
-    # and move() cleared suppressed on the way in. Without this check,
-    # _effective_action fell through to the last StateEvent (DOCKED) and
-    # returned START; the firmware silently ignores a start while docked with a
-    # paused job, so the mower did nothing.
+    # Issue #104. The sequence: mower mows (onCleanInfo sets record.job_type),
+    # pause push arrives (record.suppressed = PAUSED), mower docks via HA dock
+    # command (move() clears record.suppressed, record.dock() sets record.docked).
+    # Result: record.docked=True, record.job_type="auto", record.suppressed=None.
+    #
+    # Without this check, _effective_action found suppressed=None, fell through
+    # to the last StateEvent (DOCKED), and returned START. The firmware acks
+    # a start while docked with a paused job with code:0 but ignores it silently.
+    #
+    # note_job() is the same path onCleanInfo takes: handle_clean_info() calls
+    # record.note_job(data["cleanState"]["content"]), and the captures in #104
+    # show content={"type": "auto"} on every working and paused push.
     bus = _bus()
     record = register(bus)
     record.dock()
