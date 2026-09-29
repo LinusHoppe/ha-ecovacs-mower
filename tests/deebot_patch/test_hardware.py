@@ -24,6 +24,7 @@ from custom_components.ecovacs_mower.deebot_patch.map_messages import (
     MowerMapInfoEvent,
 )
 from custom_components.ecovacs_mower.deebot_patch.messages import (
+    BEACON_COMPONENT,
     MowerBeaconsEvent,
     MowerProtectStateEvent,
     MowerRainDelayEvent,
@@ -48,6 +49,17 @@ A1600_LIDAR = "e4gqia"
 # byte-identical to 9bts2s.py apart from the docstring, which names the model
 # outright.
 A1600_RTK = "xmp9ds"
+# A sixth, reported as a GOAT A3000 LiDAR (issue #106); upstream's docstring
+# calls it GOAT G1 instead. Its module is byte-identical to 9bts2s.py apart
+# from the docstring.
+A3000_LIDAR = "o4kvvk"
+# A seventh, reported as a GOAT O600 RTK (issue #103); upstream's module is
+# byte-identical to 9bts2s.py, docstring included.
+O600 = "6n9pcz"
+# An eighth, reported as a GOAT O1000 LiDAR Pro (issue #102). Unlike the rest,
+# its upstream module is byte-identical to the O1200's 2i0fns.py, not to
+# 9bts2s.py — the cloud calls it an O1200 LiDAR Plus internally.
+O1000_LIDAR = "0jbd6s"
 
 
 def test_supported_classes_are_the_ones_we_patch() -> None:
@@ -60,6 +72,9 @@ def test_supported_classes_are_the_ones_we_patch() -> None:
         G1_800,
         A1600_LIDAR,
         A1600_RTK,
+        A3000_LIDAR,
+        O600,
+        O1000_LIDAR,
     }
 
 
@@ -458,22 +473,31 @@ async def test_patch_swaps_in_the_life_span_command_that_survives_a_beacon(
 
 
 @pytest.mark.parametrize("class_", SUPPORTED_CLASSES)
-async def test_patch_asks_for_the_same_components_as_the_library(class_: str) -> None:
-    # Only the parsing is replaced. The device answers with every component it
-    # has whatever the request lists, so widening the request would change
-    # nothing except how far this diverges from upstream.
-    before = await get_static_device_info(class_)
-    args_before = [
-        c._args for c in before.capabilities.get_refresh_commands(LifeSpanEvent)
-    ]
-    _DEVICES.pop(class_, None)
+async def test_unpatched_library_never_asks_for_the_beacons(class_: str) -> None:
+    # Documents issue #100: the mower answers only the components a request
+    # lists, and the library lists the ones it builds entities for. On a G1-800
+    # with four beacons that request came back with blade and lens brush only.
+    # Every class, because the lists differ: the O1200 also asks for weed rope
+    # and trimmer brush. None of them asks for a beacon.
+    info = await get_static_device_info(class_)
+    commands = info.capabilities.get_refresh_commands(LifeSpanEvent)
+    assert [c._args for c in commands] == [list(info.capabilities.life_span.types)]
+    assert BEACON_COMPONENT not in commands[0]._args
 
+
+@pytest.mark.parametrize("event", [LifeSpanEvent, MowerBeaconsEvent])
+@pytest.mark.parametrize("class_", SUPPORTED_CLASSES)
+async def test_patch_asks_for_every_life_span_component(
+    class_: str, event: type
+) -> None:
+    # Both refresh paths, because either one answering is what creates the
+    # beacon entities after a restart: the blade sensor subscribes to
+    # LifeSpanEvent and the beacon platform to MowerBeaconsEvent, and whichever
+    # command still listed components would come back without the beacons.
     await patch_device_info(class_)
-    after = await get_static_device_info(class_)
-
-    assert [
-        c._args for c in after.capabilities.get_refresh_commands(LifeSpanEvent)
-    ] == args_before
+    info = await get_static_device_info(class_)
+    commands = info.capabilities.get_refresh_commands(event)
+    assert [c._get_payload()["body"] for c in commands] == [{"data": []}]
 
 
 @pytest.mark.parametrize("class_", SUPPORTED_CLASSES)

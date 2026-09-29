@@ -26,9 +26,9 @@ flips, and nothing had ever asked for the current value (issue #31).
 library just discards one of the three numbers it answers with (issue #39). Its
 counterpart for the unsolicited half, ``OnStatsMower``, is in ``messages.py``.
 
-``GetLifeSpanMower`` is a fourth: the command works, is answered in full, and
-one component of the answer makes the library abandon the rest of it (issue
-#40).
+``GetLifeSpanMower`` is a fourth: the command works, but it is only answered in
+full when it asks for everything (issue #100), and one component of that full
+answer makes the library abandon the rest of it (issue #40).
 
 ``GetRainDelay`` and ``SetRainDelay`` are the same kind as ``GetProtectState``
 — commands the library does not have at all — with the difference that this
@@ -80,6 +80,21 @@ _LOGGER = logging.getLogger(__name__)
 # Every component string the library has an enum member for. Anything else in an
 # answer is dropped rather than parsed, so the entry cannot abort the message.
 _KNOWN_COMPONENTS = frozenset(member.value for member in LifeSpan)
+
+
+def _upstream_can_parse(component: dict[str, Any]) -> bool:
+    """Whether upstream's ``GetLifeSpan`` can turn this entry into an event.
+
+    Mirrors its arithmetic: ``left`` and ``total`` go through ``int()``, and a
+    total that is not positive raises. It raises mid-loop, after publishing
+    every entry before this one, so an entry it cannot finish has to be caught
+    here rather than there.
+    """
+    try:
+        int(component["left"])
+        return int(component["total"]) > 0
+    except (KeyError, TypeError, ValueError):
+        return False
 
 
 class GetChargeStateMower(GetChargeState):
@@ -758,12 +773,39 @@ class GetLifeSpanMower(GetLifeSpan):
     a value from before the beacons were paired and never moves again, and the
     beacons themselves are invisible (issue #40).
 
-    ``NAME`` is inherited on purpose, as in ``GetStatsMower``: the request is
-    unchanged. The device answers with every component it has whatever the
-    request lists — ``9bts2s`` and its siblings ask for ``blade`` and
-    ``lensBrush`` only, and the beacons come back regardless — so there is
-    nothing to add to the query, only something to stop dropping.
+    ``NAME`` is inherited on purpose, as in ``GetStatsMower``, but the request
+    is not: it lists no components at all (issue #100). The mower answers only
+    the components a request names, and the library names the ones it builds
+    entities for — ``blade`` and ``lensBrush`` on the beacon-guided classes,
+    those two plus ``weedRope`` and ``trimmerBrush`` on the O1200 — and never a
+    beacon, so the beacons never came back from this command. They came back
+    from the app, which asks with an empty list and is answered with
+    everything: blade, one ``uwbCell`` per beacon, lens brush, the order the
+    fixture in the tests records. A T90 vacuum on the same account behaves the
+    same way, so this is how the firmware reads the request rather than a
+    quirk of one model.
+
+    What the full answer carries on a mower without beacons has not been
+    captured. Whatever it is, anything the library has no member for is
+    filtered out below before upstream's parser sees it, and a component the
+    library does know reaches that parser only with numbers it can divide. The
+    narrow request used to guarantee the second part by asking only for the
+    components the library builds entities for; the full answer no longer does.
     """
+
+    def __init__(self) -> None:
+        """Initialize the command, with no component list to send."""
+        super().__init__(())
+
+    def _get_payload(self) -> dict[str, Any]:
+        """Send the empty list the app sends, not a payload without a body.
+
+        ``JsonCommand._get_payload`` only adds ``body`` when there are args, so
+        an empty component list goes out as a header alone. That is not the
+        request the app makes, and how the mower answers it has not been seen;
+        ``{"data": []}`` has, and is answered in full.
+        """
+        return {**super()._get_payload(), "body": {"data": []}}
 
     @classmethod
     def _handle_body_data_list(
@@ -775,6 +817,11 @@ class GetLifeSpanMower(GetLifeSpan):
         components handed to ``super()`` are parsed with upstream's own
         arithmetic, which raises on a non-positive total, and a beacon reading
         should not be lost to a blade entry the library cannot divide.
+
+        Only the entries that arithmetic can finish are handed on. It publishes
+        as it goes, so one it cannot finish would otherwise lose every entry
+        after it too, the failure ``notify_mower_beacons`` guards against for
+        the beacons one entry at a time.
         """
         notify_mower_beacons(event_bus, data)
 
@@ -787,11 +834,15 @@ class GetLifeSpanMower(GetLifeSpan):
             # rest of the answer arrives, which is the whole point.
             _LOGGER.debug("Life span components without a handler: %s", unhandled)
 
-        return super()._handle_body_data_list(
-            event_bus,
-            [
-                component
-                for component in data
-                if component.get("type") in _KNOWN_COMPONENTS
-            ],
-        )
+        parseable: list[dict[str, Any]] = []
+        for component in data:
+            if component.get("type") not in _KNOWN_COMPONENTS:
+                continue
+            if _upstream_can_parse(component):
+                parseable.append(component)
+            else:
+                # Debug for the same reason as above: it would repeat on every
+                # poll, and only this entry is lost.
+                _LOGGER.debug("Life span component without a reading: %s", component)
+
+        return super()._handle_body_data_list(event_bus, parseable)

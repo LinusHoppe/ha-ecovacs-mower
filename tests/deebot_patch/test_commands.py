@@ -279,9 +279,20 @@ _LIFE_SPANS_WITH_BEACONS = [
 
 
 def test_get_life_span_mower_asks_the_same_command_as_the_library() -> None:
-    # Issue #40. The device answers with every component it has whatever the
-    # request lists, so only the parsing is replaced.
+    # Issue #40. Same command name; the request body and the parsing are what
+    # differ.
     assert GetLifeSpanMower.NAME == GetLifeSpan.NAME == "getLifeSpan"
+
+
+def test_get_life_span_mower_asks_for_every_component_like_the_app() -> None:
+    # Issue #100. The body the Ecovacs app sends, captured on a G1-800: an
+    # empty list, answered with blade, every beacon and lens brush. A request
+    # listing blade and lensBrush is answered with those two and nothing else.
+    payload = GetLifeSpanMower()._get_payload()
+
+    assert payload["body"] == {"data": []}
+    # The header is still the library's, not something rebuilt here.
+    assert payload["header"].keys() == GetLifeSpan([])._get_payload()["header"].keys()
 
 
 def test_the_librarys_own_command_aborts_on_the_first_beacon() -> None:
@@ -434,6 +445,51 @@ def test_get_life_span_mower_survives_a_component_it_has_never_heard_of() -> Non
     assert (
         call(LifeSpanEvent(LifeSpan.BLADE, 51.52, 2473))
         in event_bus.notify.call_args_list
+    )
+
+
+@pytest.mark.parametrize(
+    "broken",
+    [
+        {"type": "unitCare", "left": 0, "total": 0},
+        {"type": "unitCare", "left": 5, "total": -1},
+        {"type": "unitCare", "left": 5, "total": "n/a"},
+        {"type": "unitCare", "left": 5, "total": None},
+        {"type": "unitCare", "total": 100},
+        {"type": "unitCare", "left": 5},
+    ],
+)
+def test_get_life_span_mower_drops_a_known_component_it_cannot_divide(
+    broken: dict[str, object], caplog: pytest.LogCaptureFixture
+) -> None:
+    # Issue #100 widened the request, so the answer can now carry a component
+    # the library has a member for but nobody asked for. Handed to upstream with
+    # a total it cannot divide, it raises mid-loop and takes every entry after it
+    # along, the lens brush here: issue #40 again, one level down.
+    event_bus = Mock()
+    with caplog.at_level(logging.DEBUG):
+        GetLifeSpanMower._handle_body_data_list(
+            event_bus,
+            [
+                {"type": "blade", "left": 2473, "total": 4800},
+                {"type": "uwbCell", "sn": "BEACON-1", "left": 83, "total": 100},
+                broken,
+                {"type": "lensBrush", "left": 1000, "total": 1000},
+            ],
+        )
+
+    assert (
+        call(LifeSpanEvent(LifeSpan.LENS_BRUSH, 100.0, 1000))
+        in event_bus.notify.call_args_list
+    )
+    assert not any(
+        isinstance(notified.args[0], LifeSpanEvent)
+        and notified.args[0].type is LifeSpan.UNIT_CARE
+        for notified in event_bus.notify.call_args_list
+    )
+    assert any(
+        record.levelno == logging.DEBUG and "without a reading" in record.getMessage()
+        for record in caplog.records
     )
 
 

@@ -64,7 +64,31 @@ _LOGGER = logging.getLogger(__name__)
 #            xmp9ds.py is byte-identical to 9bts2s.py apart from the docstring,
 #            which here names the model outright ("DEEBOT GOAT A1600 RTK
 #            Capabilities"), so the O800 RTK's patch applies unchanged.
-SUPPORTED_CLASSES = ("2i0fns", "9bts2s", "2px96q", "77atlz", "e4gqia", "xmp9ds")
+#   o4kvvk — GOAT A3000 LiDAR (reported in issue #106, firmware 1.13.31 — the
+#            reporter ran it unpatched, so the patch itself is not confirmed
+#            yet). Upstream's docstring calls it "GOAT G1", the same kind of
+#            misnaming as e4gqia above; its module is byte-identical to
+#            9bts2s.py, docstring aside, so the O800 RTK's patch applies
+#            unchanged.
+#   6n9pcz — GOAT O600 RTK (reported in issue #103 with the unpatched
+#            symptoms: start and stop only, state lagging). Upstream's
+#            6n9pcz.py is byte-identical to 9bts2s.py, docstring included.
+#   0jbd6s — GOAT O1000 LiDAR Pro (reported in issue #102, firmware 2.13.10).
+#            The cloud reports its internal model as
+#            GOAT_INT_O1200_LIDAR_PLUS_NA, and upstream's 0jbd6s.py is
+#            byte-identical to 2i0fns.py, docstring included — so the O1200's
+#            patch applies unchanged, not the O800's.
+SUPPORTED_CLASSES = (
+    "2i0fns",
+    "9bts2s",
+    "2px96q",
+    "77atlz",
+    "e4gqia",
+    "xmp9ds",
+    "o4kvvk",
+    "6n9pcz",
+    "0jbd6s",
+)
 
 # ``spotArea`` has only been verified on the A1600 LiDAR Pro. Keep it limited to
 # that class until the payload shape has been verified on other firmware/classes.
@@ -102,9 +126,11 @@ async def patch_device_info(class_: str) -> None:
       the mower answers at runtime — see ``families.py``.
     * ``stats.clean``: ``GetStats`` drops ``mowedArea``, the one number that
       moves while a job runs. Swapped for ``GetStatsMower``.
-    * ``life_span.get``: ``GetLifeSpan`` raises on the ``uwbCell`` entries a
-      beacon-guided mower reports, which loses the beacons and every component
-      listed after them. Swapped for ``GetLifeSpanMower``.
+    * ``life_span.get``: ``GetLifeSpan`` asks only for the components the
+      library has entities for, and the mower answers only what it is asked,
+      so the beacons never arrive (issue #100); when they do, it raises on the
+      ``uwbCell`` entries and loses every component listed after them. Swapped
+      for ``GetLifeSpanMower``, which asks for everything.
     * ``MowerProtectStateEvent``, ``MowerRainDelayEvent``, ``MowerStatsEvent``
       and ``MowerBeaconsEvent``: given the refresh commands they had none of.
     * ``MowerMapInfoEvent``: given ``GetMapInfoV2``, without which firmware
@@ -157,13 +183,14 @@ async def patch_device_info(class_: str) -> None:
         ),
         # Only the get command is replaced. types decides which lifespan
         # entities are built and reset is the button behind them; both are the
-        # library's own and are carried through by replace(). The request keeps
-        # the same component list for the same reason the stats request keeps
-        # its name: the device answers with everything it has regardless, so
-        # widening it would buy nothing and diverge further from upstream.
+        # library's own and are carried through by replace(). The request does
+        # not follow types: the mower answers only the components a request
+        # lists, and types never lists the beacons, so the command asks for
+        # everything and leaves the choosing to the entity platforms (issue
+        # #100).
         life_span=replace(
             capabilities.life_span,
-            get=[GetLifeSpanMower(capabilities.life_span.types)],
+            get=[GetLifeSpanMower()],
         ),
     )
     # Neither the protection flags nor the mowing progress is a library
@@ -222,7 +249,7 @@ async def patch_device_info(class_: str) -> None:
                 MowerProtectStateEvent: [GetProtectState()],
                 MowerRainDelayEvent: [GetRainDelay()],
                 MowerStatsEvent: [GetStatsMower()],
-                MowerBeaconsEvent: [GetLifeSpanMower(capabilities.life_span.types)],
+                MowerBeaconsEvent: [GetLifeSpanMower()],
                 MowerMapInfoEvent: [GetMapInfoV2()],
             }
         ),

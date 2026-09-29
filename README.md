@@ -111,6 +111,9 @@ merely that the class string was seen:
 | **Ecovacs GOAT G1-800** | `77atlz` | a user, firmware 1.36.208 — the protection-flag sensors in [#30](https://github.com/nord-/ha-ecovacs-mower/issues/30), start/pause/resume/dock from the `lawn_mower` entity in [#74](https://github.com/nord-/ha-ecovacs-mower/issues/74). That firmware branch answers the `V2` command family instead of the one every other confirmed mower uses, and the integration detects and switches to it automatically, so no manual configuration is needed ([#42](https://github.com/nord-/ha-ecovacs-mower/issues/42)); border mowing is built for this class from the request captured in [#12](https://github.com/nord-/ha-ecovacs-mower/issues/12) and awaits confirmation on hardware |
 | **Ecovacs GOAT A1600 LiDAR Pro** | `e4gqia` | a user, firmware 1.11.31 ([#29](https://github.com/nord-/ha-ecovacs-mower/pull/29)) — zone mowing confirmed ([#78](https://github.com/nord-/ha-ecovacs-mower/pull/78)) |
 | **Ecovacs GOAT A1600 RTK** | `xmp9ds` | reported, patch not yet confirmed — firmware 1.17.9 ([#43](https://github.com/nord-/ha-ecovacs-mower/issues/43)) |
+| **Ecovacs GOAT A3000 LiDAR** | `o4kvvk` | reported working unpatched, patch not yet confirmed — firmware 1.13.31 ([#106](https://github.com/nord-/ha-ecovacs-mower/issues/106)) |
+| **Ecovacs GOAT O600 RTK** | `6n9pcz` | reported, patch not yet confirmed ([#103](https://github.com/nord-/ha-ecovacs-mower/issues/103)) |
+| **Ecovacs GOAT O1000 LiDAR Pro** | `0jbd6s` | reported, patch not yet confirmed — firmware 2.13.10 ([#102](https://github.com/nord-/ha-ecovacs-mower/issues/102)). Ecovacs identifies it internally as an O1200 LiDAR Plus, and it gets the O1200's capabilities |
 
 The A1600 ships as two machines, and they report different device classes:
 the LiDAR Pro is `e4gqia`, the RTK is `xmp9ds`. Both rows above are real, and
@@ -548,6 +551,15 @@ blade percentage worked, the beacons were invisible, **and the lens brush
 reported a value from before the beacons were paired that could never change.**
 That last one is fixed here too, as a side effect of not giving up on the
 answer.
+
+Parsing the beacons is only half of it: they also have to be asked for. The
+mower answers `getLifeSpan` with the components the request lists, and the
+library lists the ones it builds entities for — blade and lens brush on the
+beacon-guided models, never a beacon — so its own poll never came back with a
+beacon in it. The Ecovacs app asks with an empty
+list and gets everything, and so does this integration (issue #100). Until that
+was fixed, the beacon sensors only appeared if an `onUWB` push (below) arrived
+after a restart, and stayed unavailable until one did.
 
 #### Two sources, and they do not always agree
 

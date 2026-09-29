@@ -205,7 +205,17 @@ _VACUUM = "npwtuz"
 # The patched mower classes, spelled out rather than imported: importing
 # deebot_patch at module level would pull in Home Assistant during collection,
 # which is exactly what this file's requires_ha marker exists to avoid.
-_SUPPORTED = ("2i0fns", "9bts2s", "2px96q", "77atlz", "e4gqia", "xmp9ds")
+_SUPPORTED = (
+    "2i0fns",
+    "9bts2s",
+    "2px96q",
+    "77atlz",
+    "e4gqia",
+    "xmp9ds",
+    "o4kvvk",
+    "6n9pcz",
+    "0jbd6s",
+)
 
 
 async def _initialize_with(hass: object, device_classes: tuple[str, ...]) -> None:
