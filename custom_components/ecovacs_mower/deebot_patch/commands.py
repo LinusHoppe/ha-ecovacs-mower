@@ -440,11 +440,13 @@ class CleanMower(_AdaptiveFamily, Clean):
         entity reads docked, but the plan is paused and the mower wants
         ``resume``. Nothing else reads ``record.suppressed``.
 
-        If the mower is docked with a resumable job (job_type set, no
-        explicit end_job) but never produced a suppressed PAUSED push —
-        because the pause push arrived before docking, and move() cleared
-        suppressed on the way in — use the job_type as evidence that a
-        resumable job exists (issue #104).
+        If the mower docked mid-job via ``act:go``, the job is suspended on the
+        dock but the mower pushes no paused ``onCleanInfo`` for the gate to
+        withhold, so ``suppressed`` stays ``None``. ``record.job_type`` is set
+        from the last ``onCleanInfo`` that carried ``cleanState.content``, and is
+        cleared by ``end_job()`` when the job ends (either the app's End button
+        or a ``workComplete`` bury point). A set ``job_type`` on a docked mower
+        is therefore evidence that a suspended job exists (issue #104).
         """
         if self._action not in (CleanAction.START, CleanAction.RESUME):
             return self._action

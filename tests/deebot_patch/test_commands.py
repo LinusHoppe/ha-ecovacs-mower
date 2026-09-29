@@ -1080,7 +1080,9 @@ async def test_the_v2_delegate_still_sends_no_type_on_resume() -> None:
 
 async def test_start_becomes_resume_when_docked_with_a_recorded_job_type() -> None:
     # Issue #104. The sequence: mower mows (onCleanInfo sets record.job_type),
-    # pause push arrives (record.suppressed = PAUSED), mower docks via HA dock
+    # HA sends act:go mid-job, mower returns home and docks. No paused
+    # onCleanInfo push arrives, so record.suppressed stays None. start_mowing
+    # must still send RESUME because record.job_type signals a suspended job.
     # command (move() clears record.suppressed, record.dock() sets record.docked).
     # Result: record.docked=True, record.job_type="auto", record.suppressed=None.
     #
@@ -1102,3 +1104,28 @@ async def test_start_becomes_resume_when_docked_with_a_recorded_job_type() -> No
         await command._execute(AsyncMock(), _DEVICE_INFO, bus)
 
     assert command._delegate(Family.NON_V2)._args["act"] == "resume"
+
+async def test_start_stays_start_after_work_complete() -> None:
+    # After a completed job (workComplete bury point), end_job() clears
+    # job_type. A subsequent start_mowing must send "start", not "resume".
+    # Without the end_job() call in _OnMowJobEdge._handle_body, job_type
+    # would survive the completion and the new branch in _effective_action
+    # would send resume — a no-op at best, but wrong.
+    from custom_components.ecovacs_mower.deebot_patch.messages import OnMowAutoStop
+
+    bus = _bus()
+    record = register(bus)
+    record.dock()
+    record.note_job({"type": "auto"})
+
+    # The bury point the firmware sends when a job finishes naturally.
+    OnMowAutoStop._handle_body(bus, {"trigger": "workComplete", "workArea": 320.5})
+
+    assert record.job_type is None
+
+    fake, _ = _transport(_OK)
+    with patch.object(Command, "_execute", fake):
+        command = CleanMower(CleanAction.START)
+        await command._execute(AsyncMock(), _DEVICE_INFO, bus)
+
+    assert command._delegate(Family.NON_V2)._args["act"] == "start"
