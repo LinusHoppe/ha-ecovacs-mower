@@ -552,6 +552,8 @@ def test_set_rain_delay_reports_a_refusal_instead_of_claiming_success() -> None:
         SetRainDelay._handle_body(Mock(), {"code": 0, "msg": "ok"}).state
         is HandlingState.SUCCESS
     )
+
+
 async def test_charging_sets_the_dock_and_still_publishes_docked() -> None:
     bus = _bus()
     record = register(bus)
@@ -1160,6 +1162,7 @@ async def test_start_becomes_resume_when_docked_with_a_recorded_job_type() -> No
         await command._execute(AsyncMock(), _DEVICE_INFO, bus)
 
     assert command._delegate(Family.NON_V2)._args["act"] == "resume"
+
 
 async def test_start_stays_start_after_work_complete() -> None:
     # After a completed job (workComplete bury point), end_job() clears
